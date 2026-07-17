@@ -13,7 +13,9 @@ import (
 )
 
 // Service is the satellite impl. Methods with the W_ prefix are exported to the
-// wasm module "ipfs".
+// wasm host module "taubyte/sdk" — the single module the Taubyte go-sdk imports
+// all of its host functions from (see go-sdk-symbols). Guest wasm built with
+// github.com/taubyte/go-sdk/ipfs therefore links against this satellite.
 type Service struct {
 	backend backend.Backend
 	ctx     context.Context
@@ -45,9 +47,13 @@ func New(ctx context.Context, b backend.Backend) *Service {
 	}
 }
 
-// Export serves the satellite over the vm-orbit plugin protocol.
+// Export serves the satellite over the vm-orbit plugin protocol. The module
+// name must be "taubyte/sdk": that is the wasm host module the go-sdk (and
+// go-sdk-symbols) import every host function from, so guest wasm links against
+// it. The vm runtime names the host module after the plugin (plugin.Name()),
+// which is this string.
 func (s *Service) Export() {
-	satellite.Export("ipfs", s)
+	satellite.Export("taubyte/sdk", s)
 }
 
 func (s *Service) generateClientId() uint32 {

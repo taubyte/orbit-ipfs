@@ -44,16 +44,22 @@ type Config struct {
 	SwarmKey []byte
 	// SwarmListen are the multiaddrs the node listens on.
 	SwarmListen []string
-	// Bootstrap are the peers to bootstrap against. If empty the node runs
-	// standalone.
+	// Bootstrap are the peers to bootstrap against. If empty the node falls
+	// back to Standalone (below) or, by default, the public IPFS bootstrappers.
 	Bootstrap []libp2ppeer.AddrInfo
+	// Standalone forces the node offline (no bootstrap peers). Only consulted
+	// when Bootstrap is empty.
+	Standalone bool
 }
 
 // FromEnv builds a Config from ORBIT_IPFS_* environment variables.
 //
 //	ORBIT_IPFS_SWARM_LISTEN  comma-separated listen multiaddrs
 //	                         (default /ip4/0.0.0.0/tcp/4001)
-//	ORBIT_IPFS_BOOTSTRAP     comma-separated bootstrap p2p multiaddrs
+//	ORBIT_IPFS_BOOTSTRAP     comma-separated bootstrap p2p multiaddrs. When
+//	                         unset the node joins the public IPFS network via
+//	                         the standard bootstrappers. Set it to the literal
+//	                         "none" to force standalone/offline mode.
 //	ORBIT_IPFS_SWARM_KEY     private-network swarm key (raw contents)
 func FromEnv() (Config, error) {
 	cfg := Config{
@@ -69,11 +75,15 @@ func FromEnv() (Config, error) {
 	}
 
 	if v := strings.TrimSpace(os.Getenv("ORBIT_IPFS_BOOTSTRAP")); v != "" {
-		peers, err := parseBootstrap(v)
-		if err != nil {
-			return cfg, fmt.Errorf("parsing ORBIT_IPFS_BOOTSTRAP failed: %w", err)
+		if strings.EqualFold(v, "none") {
+			cfg.Standalone = true
+		} else {
+			peers, err := parseBootstrap(v)
+			if err != nil {
+				return cfg, fmt.Errorf("parsing ORBIT_IPFS_BOOTSTRAP failed: %w", err)
+			}
+			cfg.Bootstrap = peers
 		}
-		cfg.Bootstrap = peers
 	}
 
 	return cfg, nil
@@ -94,9 +104,18 @@ func New(ctx context.Context, cfg Config) (Backend, error) {
 		listen = []string{"/ip4/0.0.0.0/tcp/4001"}
 	}
 
-	bootstrap := peer.StandAlone()
-	if len(cfg.Bootstrap) > 0 {
+	// Bootstrap precedence:
+	//  1. explicit peers            -> Bootstrap(those)
+	//  2. Standalone requested      -> StandAlone()
+	//  3. default                   -> Bootstrap(public IPFS bootstrappers)
+	var bootstrap peer.BootstrapParams
+	switch {
+	case len(cfg.Bootstrap) > 0:
 		bootstrap = peer.Bootstrap(cfg.Bootstrap...)
+	case cfg.Standalone:
+		bootstrap = peer.StandAlone()
+	default:
+		bootstrap = peer.Bootstrap(peer.DefaultBootstrapPeers()...)
 	}
 
 	// repoPath nil => an ephemeral temp repo the node cleans up on Close.
